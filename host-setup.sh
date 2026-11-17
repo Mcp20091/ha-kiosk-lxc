@@ -65,8 +65,10 @@ IPCFG=$(ask "IP (dhcp or CIDR like 192.168.1.50/24)" "dhcp")
 GW=""; [[ $IPCFG != dhcp ]] && GW=",gw=$(ask "Gateway" "")"
 
 pveam update >/dev/null
-TEMPLATE=$(pveam available --section system | awk '/debian-13-standard/{print $2}' | sort -V | tail -1)
-[[ -n $TEMPLATE ]] || die "No Debian 13 template listed by pveam."
+# Template must match the host CPU (the list has both amd64 and arm64 builds).
+ARCH=$(dpkg --print-architecture)
+TEMPLATE=$(pveam available --section system | awk -v a="_$ARCH.tar" '/debian-13-standard/ && index($2, a) {print $2}' | sort -V | tail -1)
+[[ -n $TEMPLATE ]] || die "No Debian 13 $ARCH template listed by pveam."
 
 LXC_LINES="lxc.cgroup2.devices.allow: c 226:* rwm
 lxc.cgroup2.devices.allow: c 13:* rwm
@@ -77,7 +79,7 @@ lxc.mount.entry: /dev/tty$VT dev/tty$VT none bind,optional,create=file
 lxc.mount.entry: tmpfs run tmpfs rw,nosuid,nodev,mode=755,create=dir 0 0
 lxc.mount.entry: /run/udev run/udev none bind,ro,optional,create=dir"
 
-CREATE=(pct create "$CTID" "local:vztmpl/$TEMPLATE" --hostname "${KIOSK_HOSTNAME:-ha-kiosk}" --unprivileged 0
+CREATE=(pct create "$CTID" "local:vztmpl/$TEMPLATE" --hostname "${KIOSK_HOSTNAME:-ha-kiosk}" --unprivileged 0 --features nesting=1
   --cores 2 --memory 2048 --swap 512 --rootfs "$STORAGE:8"
   --net0 "name=eth0,bridge=$BRIDGE,ip=$IPCFG$GW" --onboot 1 --ostype debian)
 
