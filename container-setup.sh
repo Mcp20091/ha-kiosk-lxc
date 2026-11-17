@@ -15,7 +15,7 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y --no-install-recommends \
   xserver-xorg-core xserver-xorg-legacy xserver-xorg-input-libinput xinit \
-  libgl1-mesa-dri libegl1 chromium fonts-dejavu-core curl udev x11-xserver-utils xinput
+  libgl1-mesa-dri libegl1 chromium fonts-dejavu-core curl udev x11-xserver-utils xinput matchbox-window-manager
 
 # Host passes how many touchscreens it saw; fewer here means host udev data isn't reaching us.
 expected=${1:-0}; found=0

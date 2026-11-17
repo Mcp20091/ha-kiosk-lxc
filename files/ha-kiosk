@@ -11,6 +11,10 @@ for i in {1..20}; do
 done
 base=${base:-${HA_LOCAL_URL:-$HA_REMOTE_URL}}
 
+# Window manager keeps Chromium full-screen when the screen size changes (rotation, new display).
+# Without one, Chromium keeps its original size after a rotation.
+matchbox-window-manager -use_titlebar no -use_cursor no &
+
 ha-kiosk-rotate watch &
 
 exec chromium --kiosk "$base/$HA_DASHBOARD_PATH" \
