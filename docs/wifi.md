@@ -4,6 +4,10 @@ Old laptops and mini PCs repurposed as kiosks often have no convenient Ethernet.
 on Wi-Fi, with limits. **Status: not yet tested on our devices** — this is Proxmox's documented NAT
 setup plus the Wi-Fi pattern Proxmox forum users report working.
 
+**Automated:** `./wifi-setup.sh` on the Proxmox host does steps 1–3 below (and `host-setup.sh` offers
+to run it and then puts the kiosk on the NAT bridge). The manual steps are here for reference and
+for troubleshooting.
+
 ## What you need to know first
 
 - Proxmox says ["Avoid using WLAN if possible"](https://pve.proxmox.com/wiki/WLAN): expect more

@@ -8,6 +8,10 @@ VT=${KIOSK_VT:-7}
 die(){ echo "ERROR: $*" >&2; exit 1; }
 ask(){ local r; read -rp "$1 [$2]: " r; echo "${r:-$2}"; }
 yes_no(){ local r; read -rp "$1 [y/N]: " r; [[ $r == [yY]* ]]; }
+yes_default(){ local r; read -rp "$1 [Y/n]: " r; [[ $r != [nN]* ]]; }
+# NAT bridge set up for Wi-Fi hosts (see wifi-setup.sh): prints "bridge address file" or nothing.
+nat_bridge(){ awk '/^iface /{i=$2; a=""} /^[ \t]+address /{a=$2} /MASQUERADE/ && i ~ /^vmbr/ {print i, a, FILENAME; exit}' \
+  /etc/network/interfaces /etc/network/interfaces.d/* 2>/dev/null || true; }
 
 command -v pct >/dev/null || die "Run this on the Proxmox host."
 [[ $HA_DASHBOARD_PATH != CHANGE_ME ]] || die "Set HA_DASHBOARD_PATH in ha-kiosk.conf first."
@@ -56,13 +60,40 @@ systemctl is-active --quiet "getty@tty$VT" && die "A login prompt is running on 
 [[ -e /dev/tty$VT ]] || die "/dev/tty$VT missing."
 echo "tty$VT is free."
 
+echo "== Network"
+WIFI=""
+for i in /sys/class/net/*; do [[ -d $i/wireless ]] && { WIFI=$(basename "$i"); break; }; done
+NAT=$(nat_bridge)
+if [[ -n $NAT ]]; then
+  echo "NAT bridge for Wi-Fi found: ${NAT%% *}"
+elif [[ -n $WIFI ]]; then
+  echo "This host has Wi-Fi ($WIFI). Containers can't be bridged onto Wi-Fi, so a Wi-Fi setup"
+  echo "puts them on a private NAT network instead (details: docs/wifi.md)."
+  if yes_no "Set up Wi-Fi on this host now? (shows its plan first; Ethernet keeps working)"; then
+    "$HERE/wifi-setup.sh"
+    NAT=$(nat_bridge)
+  fi
+else
+  echo "Wired only."
+fi
+DEF_BRIDGE=vmbr0 DEF_IP=dhcp DEF_GW=""
+if [[ -n $NAT ]] && yes_default "Put the kiosk on the Wi-Fi NAT bridge ${NAT%% *}?"; then
+  read -r DEF_BRIDGE nat_addr _ <<<"$NAT"
+  net=${nat_addr%.*}; DEF_GW=${nat_addr%/*}
+  # first host number not already used by another container on this network
+  for n in {2..254}; do grep -qs "ip=$net\.$n/" /etc/pve/lxc/*.conf || { DEF_IP=$net.$n/24; break; }; done
+  [[ ${HA_LOCAL_URL:-} == *.local* ]] && echo "NOTE: HA_LOCAL_URL uses a .local name; those don't resolve through NAT. Use Home Assistant's IP in ha-kiosk.conf."
+fi
+
 echo; echo "== Container settings (Enter accepts default)"
 CTID=$(ask "Container ID" "$(pvesh get /cluster/nextid)")
 echo "Storages that can hold containers:"; pvesm status -content rootdir
 STORAGE=$(ask "Root disk storage" "local-lvm")
-BRIDGE=$(ask "Network bridge" "vmbr0")
-IPCFG=$(ask "IP (dhcp or CIDR like 192.168.1.50/24)" "dhcp")
-GW=""; [[ $IPCFG != dhcp ]] && GW=",gw=$(ask "Gateway" "")"
+BRIDGE=$(ask "Network bridge" "$DEF_BRIDGE")
+IPCFG=$(ask "IP (dhcp or CIDR like 192.168.1.50/24)" "$DEF_IP")
+GW=""; [[ $IPCFG != dhcp ]] && GW=",gw=$(ask "Gateway" "$DEF_GW")"
+echo "Proxmox web UI > container > Console normally shows a login prompt, and this container has no root password."
+CMODE=(); yes_default "Make Console open straight to a root shell? (only Proxmox admins can open it)" && CMODE=(--cmode shell)
 
 pveam update >/dev/null
 # Template must match the host CPU (the list has both amd64 and arm64 builds).
@@ -81,7 +112,7 @@ lxc.mount.entry: /run/udev run/udev none bind,ro,optional,create=dir"
 
 CREATE=(pct create "$CTID" "local:vztmpl/$TEMPLATE" --hostname "${KIOSK_HOSTNAME:-ha-kiosk}" --unprivileged 0 --features nesting=1
   --cores 2 --memory 2048 --swap 512 --rootfs "$STORAGE:8"
-  --net0 "name=eth0,bridge=$BRIDGE,ip=$IPCFG$GW" --onboot 1 --ostype debian)
+  --net0 "name=eth0,bridge=$BRIDGE,ip=$IPCFG$GW" --onboot 1 --ostype debian "${CMODE[@]}")
 
 cat <<PLAN
 
@@ -122,4 +153,13 @@ if yes_no "Write it? (takes effect after reboot)"; then
   mkdir -p "$(dirname "$LID")"
   printf '[Login]\nHandleLidSwitch=ignore\nHandleLidSwitchExternalPower=ignore\nHandleLidSwitchDocked=ignore\n' > "$LID"
 fi
-echo; echo "Done. Reboot the host to confirm the kiosk comes up on its own."
+cat <<DONE
+
+Done. Reboot the host to confirm the kiosk comes up on its own.
+
+Managing the kiosk: Proxmox web UI > $CTID > Console$([[ ${#CMODE[@]} -eq 0 ]] && echo " (login: set a password with 'pct exec $CTID -- passwd', or use 'pct enter $CTID' from the host Shell)")
+  ha-kiosk-rotate status | left | right | normal | inverted | lock | unlock
+  nano /etc/ha-kiosk.conf          then: systemctl restart ha-kiosk
+  journalctl -u ha-kiosk -f        logs
+From the host shell, prefix any of these with: pct exec $CTID --
+DONE

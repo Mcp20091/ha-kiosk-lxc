@@ -79,10 +79,36 @@ host's `/run/udev` bind mount; without udev data, libinput can't recognise the t
   doesn't include; those devices run display-only.
 - Optional host change offered at the end: ignore lid close so the host never suspends.
 
+## Managing the kiosk
+
+Proxmox web UI > the kiosk container > **Console** gives a root shell inside the container.
+`host-setup.sh` offers to make Console open straight to a shell (`--cmode shell`), since the container
+has no root password. If you said no: `pct exec <id> -- passwd` to set one, or `pct enter <id>` from the
+host's Shell. On an existing container: `pct set <id> --cmode shell`.
+
+```bash
+ha-kiosk-rotate status            # or left | right | normal | inverted | lock | unlock
+nano /etc/ha-kiosk.conf           # URLs, dashboard path, scale...
+systemctl restart ha-kiosk        # apply config changes
+journalctl -u ha-kiosk -f         # logs
+```
+
+From the host shell, prefix any of these with `pct exec <id> --`.
+
 ## No Ethernet? Running the host on Wi-Fi
 
-See [docs/wifi.md](docs/wifi.md): guests can't be bridged onto Wi-Fi, so the kiosk container sits on a
-private NAT network behind the host. That's fine for a kiosk, which only connects out to Home Assistant.
+`host-setup.sh` detects a Wi-Fi card and offers to set it up, or run it on its own on any Proxmox host:
+
+```bash
+./wifi-setup.sh
+```
+
+It installs `wpasupplicant` (fixing the enterprise-repo `401` error on fresh installs if needed),
+stores your Wi-Fi password as a hash, writes `/etc/network/interfaces.d/wifi`, and creates a private
+NAT bridge for containers, since guests can't be bridged onto Wi-Fi. It shows the plan before
+changing anything, keeps Ethernet working, and is safe to re-run. The kiosk only connects out to Home
+Assistant, so NAT is fine; use Home Assistant's IP, not `homeassistant.local`. Background, manual
+steps and troubleshooting: [docs/wifi.md](docs/wifi.md).
 
 ## Troubleshooting (inside the container)
 
