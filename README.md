@@ -27,11 +27,32 @@ until you answer `y`. It then creates the container and runs `container-setup.sh
 | `HA_DASHBOARD_PATH` | Path only, e.g. `dashboard-wall/0` |
 | `KIOSK_VT` | Host VT for the kiosk (default 7) |
 | `KIOSK_HOSTNAME` | Container hostname |
-| `KIOSK_ROTATION` | `normal`, `left`, `right`, `inverted`; touch follows |
+| `KIOSK_ROTATION` | `auto` (accelerometer, default), `normal`, `left`, `right`, `inverted`; touch follows |
 | `KIOSK_SCALE` | UI zoom for high-DPI panels, e.g. `1.5` |
 | `KIOSK_OUTPUT` | Display output; empty = built-in panel |
 
 To change settings later: edit `/etc/ha-kiosk.conf` inside the container, then `systemctl restart ha-kiosk`.
+
+## Rotation
+
+`auto` reads the screen's accelerometer straight from the kernel (`/sys/bus/iio`), applies the
+device's axis correction from udev's sensor database, and uses the same 35° tilt rule as
+iio-sensor-proxy (what GNOME/KDE use). Lying flat keeps the current orientation; a turn must
+hold for ~2 s before the screen rotates. No accelerometer = stays `normal`, manual still works.
+
+From the Proxmox host (replace `<id>` with the container ID):
+
+```bash
+pct exec <id> -- ha-kiosk-rotate status     # mode, on-screen orientation, live sensor reading
+pct exec <id> -- ha-kiosk-rotate lock       # freeze at current orientation
+pct exec <id> -- ha-kiosk-rotate unlock     # back to auto
+pct exec <id> -- ha-kiosk-rotate left       # manual: normal | left | right | inverted
+pct exec <id> -- ha-kiosk-rotate reset      # back to KIOSK_ROTATION from the config
+```
+
+The chosen mode is saved in `/var/lib/ha-kiosk/rotation` and survives reboots.
+If auto-rotate turns the wrong way, run `status` while holding the device upright and open an issue
+with the output (the axis-correction data for that model is wrong or missing).
 
 ## What gets added to `/etc/pve/lxc/<id>.conf`
 

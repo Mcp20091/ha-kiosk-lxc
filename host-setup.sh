@@ -41,6 +41,14 @@ else
   yes_no "Continue without touch?" || exit 1
 fi
 
+echo "== Accelerometer"
+accel=""
+for d in /sys/bus/iio/devices/iio:device*; do
+  [[ -r $d/in_accel_x_raw ]] || continue
+  accel+="$d: $(cat "$d/name") $(udevadm info -q property -p "$d" | grep -E '^ACCEL_(LOCATION|MOUNT_MATRIX)=' | tr '\n' ' ')"$'\n'
+done
+if [[ -n $accel ]]; then printf '%s' "$accel"; else echo "None found - auto-rotate will stay at normal; manual rotation still works."; fi
+
 echo "== VT$VT"
 systemctl is-active --quiet "getty@tty$VT" && die "A login prompt is running on tty$VT; pick another KIOSK_VT."
 [[ -e /dev/tty$VT ]] || die "/dev/tty$VT missing."
@@ -92,6 +100,8 @@ echo "Waiting for container network..."
 for i in {1..30}; do pct exec "$CTID" -- getent hosts deb.debian.org >/dev/null 2>&1 && break; sleep 2; done
 pct push "$CTID" "$HERE/ha-kiosk.conf" /etc/ha-kiosk.conf
 pct push "$CTID" "$HERE/container-setup.sh" /root/container-setup.sh --perms 755
+pct exec "$CTID" -- mkdir -p /root/ha-kiosk-files
+for f in "$HERE"/files/*; do pct push "$CTID" "$f" "/root/ha-kiosk-files/$(basename "$f")"; done
 pct exec "$CTID" -- /root/container-setup.sh "$(printf '%s' "$touch" | grep -c . || true)"
 
 LID=/etc/systemd/logind.conf.d/ha-kiosk-lid.conf

@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# X session for the kiosk (started by xinit from ha-kiosk.service).
+source /etc/ha-kiosk.conf
+# Use the local URL when HA answers on it, otherwise the remote one. Retry ~60s at boot.
+base=""
+for i in {1..20}; do
+  for u in "$HA_LOCAL_URL" "$HA_REMOTE_URL"; do
+    [[ -n $u ]] && curl -fsS -m 3 -o /dev/null "$u/manifest.json" && { base=$u; break 2; }
+  done
+  sleep 3
+done
+base=${base:-${HA_LOCAL_URL:-$HA_REMOTE_URL}}
+
+ha-kiosk-rotate watch &
+
+exec chromium --kiosk "$base/$HA_DASHBOARD_PATH" \
+  ${KIOSK_SCALE:+--force-device-scale-factor=$KIOSK_SCALE} \
+  --touch-events=enabled --noerrdialogs --disable-infobars --no-first-run \
+  --hide-crash-restore-bubble --password-store=basic \
+  --overscroll-history-navigation=0 --disable-features=Translate

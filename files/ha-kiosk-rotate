@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+# Screen rotation for the kiosk.
+#   ha-kiosk-rotate auto | normal | left | right | inverted   set mode (persists across reboots)
+#   ha-kiosk-rotate lock     freeze at the current orientation
+#   ha-kiosk-rotate unlock   back to auto
+#   ha-kiosk-rotate reset    forget saved mode, use KIOSK_ROTATION from /etc/ha-kiosk.conf
+#   ha-kiosk-rotate status   show mode, orientation and live accelerometer reading
+#   ha-kiosk-rotate watch    (internal) apply mode inside the X session
+source /etc/ha-kiosk.conf
+STATE=/var/lib/ha-kiosk
+MODE_FILE=$STATE/rotation      # written by this command, read by the watcher
+CURRENT_FILE=$STATE/current    # orientation actually on screen
+shopt -s nullglob
+
+mode(){ cat "$MODE_FILE" 2>/dev/null || echo "${KIOSK_ROTATION:-auto}"; }
+
+# Display accelerometer: an IIO device with x/y/z, skipping one marked as in the keyboard base.
+find_accel(){
+  local d loc
+  for d in /sys/bus/iio/devices/iio:device*; do
+    [[ -r $d/in_accel_x_raw && -r $d/in_accel_y_raw && -r $d/in_accel_z_raw ]] || continue
+    loc=$(udevadm info -q property -p "$d" 2>/dev/null | sed -n 's/^ACCEL_LOCATION=//p')
+    [[ $loc == base ]] && continue
+    echo "$d"; return
+  done
+}
+
+# Axis correction: udev hwdb ACCEL_MOUNT_MATRIX, else kernel mount matrix, else identity.
+mount_matrix(){
+  local m
+  m=$(udevadm info -q property -p "$1" 2>/dev/null | sed -n 's/^ACCEL_MOUNT_MATRIX=//p')
+  [[ -z $m && -r $1/in_accel_mount_matrix ]] && m=$(cat "$1/in_accel_mount_matrix")
+  echo "${m:-1, 0, 0; 0, 1, 0; 0, 0, 1}"
+}
+
+# Same tilt-angle method and 35 degree threshold as iio-sensor-proxy. Prints nothing when flat.
+orientation(){
+  local d=$1
+  awk -v x="$(cat "$d/in_accel_x_raw")" -v y="$(cat "$d/in_accel_y_raw")" \
+      -v z="$(cat "$d/in_accel_z_raw")" -v m="$(mount_matrix "$d")" 'BEGIN {
+    split(m, r, /[;,] */)
+    X = r[1]*x + r[2]*y + r[3]*z; Y = r[4]*x + r[5]*y + r[6]*z; Z = r[7]*x + r[8]*y + r[9]*z
+    k = 180 / atan2(0, -1)
+    p = atan2(X, sqrt(Y*Y + Z*Z)) * k
+    if (p > 35)  { print "left"; exit }
+    if (p < -35) { print "right"; exit }
+    l = atan2(Y, sqrt(X*X + Z*Z)) * k
+    if (l > 35)  { print "inverted"; exit }
+    if (l < -35) { print "normal"; exit }
+  }'
+}
+
+# Configured output, else built-in panel, else first connected.
+output(){
+  local connected
+  [[ -n $KIOSK_OUTPUT ]] && { echo "$KIOSK_OUTPUT"; return; }
+  connected=$(xrandr --query | awk '/ connected/{print $1}')
+  grep -m1 -E '^(eDP|LVDS|DSI)' <<<"$connected" || head -1 <<<"$connected"
+}
+
+apply(){
+  local out ev
+  out=$(output); [[ -n $out ]] || return 1
+  xrandr --output "$out" --rotate "$1" || return 1
+  # Re-bind touchscreens so touch follows the rotation.
+  for ev in /dev/input/event*; do
+    udevadm info -q property -n "$ev" 2>/dev/null | grep -qx 'ID_INPUT_TOUCHSCREEN=1' || continue
+    xinput map-to-output "pointer:$(cat "/sys/class/input/${ev##*/}/device/name")" "$out"
+  done
+  echo "$1" > "$CURRENT_FILE"
+}
+
+watch(){
+  local accel current="" want last="" m
+  accel=$(find_accel)
+  echo "ha-kiosk-rotate: accelerometer ${accel:-not found}"
+  while :; do
+    m=$(mode)
+    if [[ $m == auto ]]; then
+      want=""
+      [[ -n $accel ]] && want=$(orientation "$accel")
+      # Flat or no sensor: keep what's on screen (normal at first start).
+      want=${want:-${current:-normal}}
+      # Require two matching readings in a row so a brief tilt doesn't flip the screen.
+      [[ $want != "$last" ]] && { last=$want; sleep 1; continue; }
+    else
+      want=$m
+    fi
+    [[ $want != "$current" ]] && apply "$want" && current=$want
+    sleep 1
+  done
+}
+
+case ${1:-status} in
+  auto|normal|left|right|inverted) echo "$1" > "$MODE_FILE"; echo "Mode: $1" ;;
+  lock)   c=$(cat "$CURRENT_FILE" 2>/dev/null || echo normal); echo "$c" > "$MODE_FILE"; echo "Locked at $c" ;;
+  unlock) echo auto > "$MODE_FILE"; echo "Mode: auto" ;;
+  reset)  rm -f "$MODE_FILE"; echo "Mode: ${KIOSK_ROTATION:-auto} (from config)" ;;
+  watch)  watch ;;
+  status)
+    a=$(find_accel)
+    echo "Mode:          $(mode)"
+    echo "On screen:     $(cat "$CURRENT_FILE" 2>/dev/null || echo unknown)"
+    echo "Accelerometer: ${a:-not found}"
+    if [[ -n $a ]]; then
+      echo "Mount matrix:  $(mount_matrix "$a")"
+      echo "Raw x/y/z:     $(cat "$a/in_accel_x_raw") $(cat "$a/in_accel_y_raw") $(cat "$a/in_accel_z_raw")"
+      o=$(orientation "$a"); echo "Sensor says:   ${o:-flat (no change)}"
+    fi ;;
+  *) sed -n '2,9p' "$0"; exit 1 ;;
+esac

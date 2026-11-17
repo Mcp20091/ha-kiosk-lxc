@@ -46,41 +46,9 @@ Section "ServerFlags"
 EndSection
 XORG
 
-cat > /usr/local/bin/ha-kiosk <<'LAUNCH'
-#!/usr/bin/env bash
-source /etc/ha-kiosk.conf
-# Use the local URL when HA answers on it, otherwise the remote one. Retry ~60s at boot.
-base=""
-for i in {1..20}; do
-  for u in "$HA_LOCAL_URL" "$HA_REMOTE_URL"; do
-    [[ -n $u ]] && curl -fsS -m 3 -o /dev/null "$u/manifest.json" && { base=$u; break 2; }
-  done
-  sleep 3
-done
-base=${base:-${HA_LOCAL_URL:-$HA_REMOTE_URL}}
-
-# Pick the display: configured output, else built-in panel, else first connected.
-out=$KIOSK_OUTPUT
-if [[ -z $out ]]; then
-  connected=$(xrandr --query | awk '/ connected/{print $1}')
-  out=$(grep -m1 -E '^(eDP|LVDS|DSI)' <<<"$connected" || head -1 <<<"$connected")
-fi
-if [[ -n $out ]]; then
-  xrandr --output "$out" --rotate "${KIOSK_ROTATION:-normal}"
-  # Bind each touchscreen to that output so touch matches rotation and position.
-  for ev in /dev/input/event*; do
-    udevadm info -q property -n "$ev" 2>/dev/null | grep -qx 'ID_INPUT_TOUCHSCREEN=1' || continue
-    xinput map-to-output "pointer:$(cat /sys/class/input/${ev##*/}/device/name)" "$out"
-  done
-fi
-
-exec chromium --kiosk "$base/$HA_DASHBOARD_PATH" \
-  ${KIOSK_SCALE:+--force-device-scale-factor=$KIOSK_SCALE} \
-  --touch-events=enabled --noerrdialogs --disable-infobars --no-first-run \
-  --hide-crash-restore-bubble --password-store=basic \
-  --overscroll-history-navigation=0 --disable-features=Translate
-LAUNCH
-chmod 755 /usr/local/bin/ha-kiosk
+install -m 755 /root/ha-kiosk-files/ha-kiosk /root/ha-kiosk-files/ha-kiosk-rotate /usr/local/bin/
+# Rotation state: kiosk user records what's on screen; root sets the mode via ha-kiosk-rotate.
+install -d -o kiosk -g kiosk /var/lib/ha-kiosk
 
 cat > /etc/systemd/system/ha-kiosk.service <<UNIT
 [Unit]
