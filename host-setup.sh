@@ -45,7 +45,9 @@ echo "== Accelerometer"
 accel=""
 for d in /sys/bus/iio/devices/iio:device*; do
   [[ -r $d/in_accel_x_raw ]] || continue
-  accel+="$d: $(cat "$d/name") $(udevadm info -q property -p "$d" | grep -E '^ACCEL_(LOCATION|MOUNT_MATRIX)=' | tr '\n' ' ')"$'\n'
+  # No ACCEL_* udev properties is normal on many devices; grep finding nothing must not abort.
+  props=$(udevadm info -q property -p "$d" | grep -E '^ACCEL_(LOCATION|MOUNT_MATRIX)=' | tr '\n' ' ' || true)
+  accel+="$d: $(cat "$d/name") ${props:-(no udev orientation data)}"$'\n'
 done
 if [[ -n $accel ]]; then printf '%s' "$accel"; else echo "None found - auto-rotate will stay at normal; manual rotation still works."; fi
 
