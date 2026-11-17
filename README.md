@@ -79,6 +79,11 @@ host's `/run/udev` bind mount; without udev data, libinput can't recognise the t
   doesn't include; those devices run display-only.
 - Optional host change offered at the end: ignore lid close so the host never suspends.
 
+## No Ethernet? Running the host on Wi-Fi
+
+See [docs/wifi.md](docs/wifi.md): guests can't be bridged onto Wi-Fi, so the kiosk container sits on a
+private NAT network behind the host. That's fine for a kiosk, which only connects out to Home Assistant.
+
 ## Troubleshooting (inside the container)
 
 ```bash
